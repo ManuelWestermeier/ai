@@ -1,22 +1,22 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>WebLLM Chat + IndexedDB Cache</title>
+<meta charset="UTF-8">
+<title>WebLLM Streaming Chat</title>
 
 <style>
 body { font-family: Arial; margin: 20px; }
-#chat { height: 420px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
+#chat { height: 420px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; }
 .msg { margin: 6px 0; white-space: pre-wrap; }
 .user { color: #1a73e8; }
 .bot { color: #188038; }
-#status { margin: 8px 0; font-size: 14px; }
+#status { margin: 10px 0; font-size: 14px; }
 progress { width: 100%; }
 </style>
 </head>
 <body>
 
-<h3>WebLLM Chat (IndexedDB Cache)</h3>
+<h3>Streaming WebLLM Chat</h3>
 
 <div id="status">Init...</div>
 <progress id="progress" value="0" max="100"></progress>
@@ -29,44 +29,37 @@ progress { width: 100%; }
 <script type="module">
 import * as webllm from "https://esm.run/@mlc-ai/web-llm";
 
-/* ---------------- IndexedDB (simple cache) ---------------- */
+/* ---------------- IndexedDB ---------------- */
 
-const DB_NAME = "llm-cache-db";
+const DB = "llm-db";
 const STORE = "kv";
 
 function openDB() {
-    return new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, 1);
-
+    return new Promise((res, rej) => {
+        const req = indexedDB.open(DB, 1);
         req.onupgradeneeded = () => {
-            const db = req.result;
-            if (!db.objectStoreNames.contains(STORE)) {
-                db.createObjectStore(STORE);
-            }
+            req.result.createObjectStore(STORE);
         };
-
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
+        req.onsuccess = () => res(req.result);
+        req.onerror = () => rej(req.error);
     });
 }
 
-async function idbSet(key, value) {
+async function set(key, val) {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
+    return new Promise(r => {
         const tx = db.transaction(STORE, "readwrite");
-        tx.objectStore(STORE).put(value, key);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
+        tx.objectStore(STORE).put(val, key);
+        tx.oncomplete = r;
     });
 }
 
-async function idbGet(key) {
+async function get(key) {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
+    return new Promise(r => {
         const tx = db.transaction(STORE, "readonly");
         const req = tx.objectStore(STORE).get(key);
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
+        req.onsuccess = () => r(req.result);
     });
 }
 
@@ -75,109 +68,85 @@ async function idbGet(key) {
 const chat = document.getElementById("chat");
 const input = document.getElementById("input");
 const statusEl = document.getElementById("status");
-const progressEl = document.getElementById("progress");
-const sendBtn = document.getElementById("sendBtn");
+const progress = document.getElementById("progress");
 
-function log(text, cls) {
-    const div = document.createElement("div");
-    div.className = "msg " + cls;
-    div.textContent = text;
-    chat.appendChild(div);
+function add(text, cls) {
+    const d = document.createElement("div");
+    d.className = "msg " + cls;
+    d.textContent = text;
+    chat.appendChild(d);
     chat.scrollTop = chat.scrollHeight;
 }
 
 /* ---------------- Model ---------------- */
 
-let engine = null;
-let modelId = null;
+let engine;
+let modelId;
 
 function pickModel() {
     const list = webllm.prebuiltAppConfig.model_list;
 
-    const m =
-        list.find(x => x.model_id.includes("TinyLlama")) ||
-        list.find(x => x.model_id.includes("Llama")) ||
-        list[0];
-
-    return m.model_id;
+    return (
+        list.find(m => m.model_id.includes("TinyLlama")) ||
+        list.find(m => m.model_id.includes("Llama")) ||
+        list[0]
+    ).model_id;
 }
 
-async function initModel() {
-
-    // try restore cached model id
-    const cachedModel = await idbGet("modelId");
-
-    modelId = cachedModel || pickModel();
+async function init() {
+    modelId = await get("modelId") || pickModel();
 
     statusEl.textContent = "Loading: " + modelId;
 
     engine = await webllm.CreateMLCEngine(modelId, {
-        initProgressCallback: async (p) => {
+        initProgressCallback: (p) => {
             if (p.progress !== undefined) {
-                progressEl.value = Math.round(p.progress * 100);
+                progress.value = Math.round(p.progress * 100);
             }
-            statusEl.textContent = p.text || p.stage || "loading...";
+            statusEl.textContent = p.text || "loading...";
         }
     });
 
-    await idbSet("modelId", modelId);
+    await set("modelId", modelId);
 
-    statusEl.textContent = "Ready (cached)";
+    statusEl.textContent = "Ready";
 }
 
-/* ---------------- Chat ---------------- */
+/* ---------------- STREAM CHAT ---------------- */
 
 async function send() {
     const text = input.value.trim();
     if (!text || !engine) return;
 
     input.value = "";
-    log("You: " + text, "user");
+    add("You: " + text, "user");
 
-    statusEl.textContent = "Generating...";
+    const botDiv = document.createElement("div");
+    botDiv.className = "msg bot";
+    chat.appendChild(botDiv);
 
-    const res = await engine.chat.completions.create({
+    let full = "";
+
+    const stream = await engine.chat.completions.create({
         messages: [
             { role: "user", content: text }
         ],
         temperature: 0.7,
-        max_tokens: 200
+        max_tokens: 200,
+        stream: true
     });
 
-    const msg = res?.choices?.[0]?.message?.content;
-
-    if (!msg) {
-        log("Bot: [empty response]", "bot");
-        return;
-    }
-
-    log("Bot: " + msg, "bot");
-    statusEl.textContent = "Ready";
-
-    // cache last chat
-    const history = (await idbGet("chat")) || [];
-    history.push({ user: text, bot: msg });
-    await idbSet("chat", history);
-}
-
-sendBtn.addEventListener("click", send);
-
-/* ---------------- Restore chat ---------------- */
-
-async function restoreChat() {
-    const history = await idbGet("chat");
-    if (!history) return;
-
-    for (const item of history) {
-        log("You: " + item.user, "user");
-        log("Bot: " + item.bot, "bot");
+    for await (const chunk of stream) {
+        const token = chunk.choices[0]?.delta?.content || "";
+        full += token;
+        botDiv.textContent = "Bot: " + full;
+        chat.scrollTop = chat.scrollHeight;
     }
 }
 
-/* ---------------- Start ---------------- */
+document.getElementById("sendBtn").addEventListener("click", send);
 
-restoreChat();
-initModel();
+init();
 
 </script>
 
