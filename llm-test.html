@@ -2,62 +2,100 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>WebGPU Chat</title>
+<title>WebGPU LLM Chat</title>
 <style>
 body { font-family: Arial; margin: 20px; }
-#chat { height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; }
+#chat { height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
 .msg { margin: 5px 0; }
 .user { color: blue; }
 .bot { color: green; }
+#status { margin: 10px 0; }
+progress { width: 100%; }
 </style>
 </head>
 <body>
 
-<h2>WebGPU Chat</h2>
+<h2>Local LLM (WebGPU)</h2>
 
-<div id="status">Loading...</div>
+<progress id="progress" value="0" max="100"></progress>
+<div id="status">Initializing...</div>
+
 <div id="chat"></div>
 
-<input id="input" style="width:80%">
+<input id="input" style="width:80%" placeholder="Type message...">
 <button onclick="send()">Send</button>
 
 <script type="module">
-import { pipeline } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2";
+import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2";
 
-let generator;
+// Ensure correct CDN
+env.allowLocalModels = false;
+env.allowRemoteModels = true;
+env.remoteURL = "https://huggingface.co/";
 
-const chat = document.getElementById("chat");
-const status = document.getElementById("status");
+let generator = null;
+let loading = false;
+
+const progressEl = document.getElementById("progress");
+const statusEl = document.getElementById("status");
+const chatEl = document.getElementById("chat");
 
 function log(text, cls="bot") {
     const div = document.createElement("div");
     div.className = "msg " + cls;
     div.textContent = text;
-    chat.appendChild(div);
+    chatEl.appendChild(div);
+    chatEl.scrollTop = chatEl.scrollHeight;
 }
 
-async function init() {
+async function loadModel() {
+    if (generator || loading) return;
+    loading = true;
+
+    statusEl.textContent = "Downloading model...";
+
     generator = await pipeline(
         "text-generation",
-        "Xenova/distilgpt2", // funktioniert im Browser
+        "Xenova/distilgpt2",
         {
-            device: "webgpu"
+            device: "webgpu",
+            progress_callback: (p) => {
+                if (p.status === "progress") {
+                    progressEl.value = Math.round(p.progress * 100);
+                }
+                statusEl.textContent = p.status;
+            }
         }
     );
-    status.textContent = "Ready";
+
+    statusEl.textContent = "Model ready (cached)";
 }
 
 async function send() {
-    const input = document.getElementById("input").value;
-    if (!input) return;
+    const inputEl = document.getElementById("input");
+    const text = inputEl.value.trim();
+    if (!text) return;
 
-    log("You: " + input, "user");
+    log("You: " + text, "user");
+    inputEl.value = "";
 
-    const out = await generator(input, { max_new_tokens: 50 });
-    log("Bot: " + out[0].generated_text, "bot");
+    if (!generator) {
+        await loadModel();
+    }
+
+    log("Bot: ...");
+
+    const output = await generator(text, {
+        max_new_tokens: 80,
+        temperature: 0.7,
+        top_k: 50
+    });
+
+    chatEl.lastChild.textContent = "Bot: " + output[0].generated_text;
 }
 
-init();
+// Auto-load model
+loadModel();
 </script>
 
 </body>
