@@ -3,56 +3,57 @@
 <head>
 <meta charset="UTF-8">
 <title>WebGPU LLM Chat</title>
+
 <style>
 body { font-family: Arial; margin: 20px; }
-#chat { height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
+#chat { height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; }
 .msg { margin: 5px 0; }
 .user { color: blue; }
 .bot { color: green; }
-#status { margin: 10px 0; }
 progress { width: 100%; }
 </style>
+
 </head>
 <body>
 
-<h2>Local LLM (WebGPU)</h2>
+<h2>LLM Chat (WebGPU)</h2>
 
 <progress id="progress" value="0" max="100"></progress>
-<div id="status">Initializing...</div>
+<div id="status">Init...</div>
 
 <div id="chat"></div>
 
-<input id="input" style="width:80%" placeholder="Type message...">
-<button onclick="send()">Send</button>
+<input id="input" style="width:80%" placeholder="Message">
+<button id="sendBtn">Send</button>
 
 <script type="module">
 import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2";
 
-// Ensure correct CDN
 env.allowLocalModels = false;
 env.allowRemoteModels = true;
 env.remoteURL = "https://huggingface.co/";
 
 let generator = null;
-let loading = false;
+let ready = false;
 
-const progressEl = document.getElementById("progress");
-const statusEl = document.getElementById("status");
-const chatEl = document.getElementById("chat");
+const chat = document.getElementById("chat");
+const status = document.getElementById("status");
+const progress = document.getElementById("progress");
+const input = document.getElementById("input");
+const btn = document.getElementById("sendBtn");
 
 function log(text, cls="bot") {
     const div = document.createElement("div");
     div.className = "msg " + cls;
     div.textContent = text;
-    chatEl.appendChild(div);
-    chatEl.scrollTop = chatEl.scrollHeight;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
 }
 
-async function loadModel() {
-    if (generator || loading) return;
-    loading = true;
+async function load() {
+    if (generator) return;
 
-    statusEl.textContent = "Downloading model...";
+    status.textContent = "Downloading / caching model...";
 
     generator = await pipeline(
         "text-generation",
@@ -61,41 +62,42 @@ async function loadModel() {
             device: "webgpu",
             progress_callback: (p) => {
                 if (p.status === "progress") {
-                    progressEl.value = Math.round(p.progress * 100);
+                    progress.value = Math.round(p.progress * 100);
                 }
-                statusEl.textContent = p.status;
+                status.textContent = p.status;
             }
         }
     );
 
-    statusEl.textContent = "Model ready (cached)";
+    ready = true;
+    status.textContent = "Ready";
 }
 
 async function send() {
-    const inputEl = document.getElementById("input");
-    const text = inputEl.value.trim();
+    const text = input.value.trim();
     if (!text) return;
 
     log("You: " + text, "user");
-    inputEl.value = "";
+    input.value = "";
 
-    if (!generator) {
-        await loadModel();
+    if (!ready) {
+        log("Loading model...");
+        await load();
     }
 
-    log("Bot: ...");
-
-    const output = await generator(text, {
+    const out = await generator(text, {
         max_new_tokens: 80,
-        temperature: 0.7,
-        top_k: 50
+        temperature: 0.7
     });
 
-    chatEl.lastChild.textContent = "Bot: " + output[0].generated_text;
+    log("Bot: " + out[0].generated_text, "bot");
 }
 
-// Auto-load model
-loadModel();
+// FIX: proper binding
+btn.addEventListener("click", send);
+
+// preload
+load();
 </script>
 
 </body>
