@@ -1,23 +1,22 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>WebLLM Stable Chat</title>
+<meta charset="UTF-8" />
+<title>WebLLM Chat + IndexedDB Cache</title>
 
 <style>
 body { font-family: Arial; margin: 20px; }
 #chat { height: 420px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
-.msg { margin: 6px 0; }
+.msg { margin: 6px 0; white-space: pre-wrap; }
 .user { color: #1a73e8; }
 .bot { color: #188038; }
 #status { margin: 8px 0; font-size: 14px; }
 progress { width: 100%; }
 </style>
-
 </head>
 <body>
 
-<h3>WebLLM Chat (Auto Model Fix)</h3>
+<h3>WebLLM Chat (IndexedDB Cache)</h3>
 
 <div id="status">Init...</div>
 <progress id="progress" value="0" max="100"></progress>
@@ -29,6 +28,49 @@ progress { width: 100%; }
 
 <script type="module">
 import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+
+/* ---------------- IndexedDB (simple cache) ---------------- */
+
+const DB_NAME = "llm-cache-db";
+const STORE = "kv";
+
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, 1);
+
+        req.onupgradeneeded = () => {
+            const db = req.result;
+            if (!db.objectStoreNames.contains(STORE)) {
+                db.createObjectStore(STORE);
+            }
+        };
+
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+async function idbSet(key, value) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, "readwrite");
+        tx.objectStore(STORE).put(value, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+async function idbGet(key) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, "readonly");
+        const req = tx.objectStore(STORE).get(key);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+/* ---------------- UI ---------------- */
 
 const chat = document.getElementById("chat");
 const input = document.getElementById("input");
@@ -44,29 +86,33 @@ function log(text, cls) {
     chat.scrollTop = chat.scrollHeight;
 }
 
+/* ---------------- Model ---------------- */
+
 let engine = null;
-let ready = false;
 let modelId = null;
 
 function pickModel() {
     const list = webllm.prebuiltAppConfig.model_list;
 
-    // safest small model selection
-    const preferred =
-        list.find(m => m.model_id.includes("TinyLlama")) ||
-        list.find(m => m.model_id.includes("phi")) ||
+    const m =
+        list.find(x => x.model_id.includes("TinyLlama")) ||
+        list.find(x => x.model_id.includes("Llama")) ||
         list[0];
 
-    return preferred.model_id;
+    return m.model_id;
 }
 
-async function init() {
-    modelId = pickModel();
+async function initModel() {
 
-    statusEl.textContent = "Loading model: " + modelId;
+    // try restore cached model id
+    const cachedModel = await idbGet("modelId");
+
+    modelId = cachedModel || pickModel();
+
+    statusEl.textContent = "Loading: " + modelId;
 
     engine = await webllm.CreateMLCEngine(modelId, {
-        initProgressCallback: (p) => {
+        initProgressCallback: async (p) => {
             if (p.progress !== undefined) {
                 progressEl.value = Math.round(p.progress * 100);
             }
@@ -74,35 +120,64 @@ async function init() {
         }
     });
 
-    ready = true;
-    statusEl.textContent = "Ready (cached after first load)";
+    await idbSet("modelId", modelId);
+
+    statusEl.textContent = "Ready (cached)";
 }
+
+/* ---------------- Chat ---------------- */
 
 async function send() {
     const text = input.value.trim();
-    if (!text) return;
+    if (!text || !engine) return;
 
-    log("You: " + text, "user");
     input.value = "";
+    log("You: " + text, "user");
 
-    if (!ready) {
-        log("Model loading...");
-        await init();
-    }
+    statusEl.textContent = "Generating...";
 
     const res = await engine.chat.completions.create({
         messages: [
             { role: "user", content: text }
-        ]
+        ],
+        temperature: 0.7,
+        max_tokens: 200
     });
 
-    log("Bot: " + res.choices[0].message.content, "bot");
+    const msg = res?.choices?.[0]?.message?.content;
+
+    if (!msg) {
+        log("Bot: [empty response]", "bot");
+        return;
+    }
+
+    log("Bot: " + msg, "bot");
+    statusEl.textContent = "Ready";
+
+    // cache last chat
+    const history = (await idbGet("chat")) || [];
+    history.push({ user: text, bot: msg });
+    await idbSet("chat", history);
 }
 
 sendBtn.addEventListener("click", send);
 
-// start immediately
-init();
+/* ---------------- Restore chat ---------------- */
+
+async function restoreChat() {
+    const history = await idbGet("chat");
+    if (!history) return;
+
+    for (const item of history) {
+        log("You: " + item.user, "user");
+        log("Bot: " + item.bot, "bot");
+    }
+}
+
+/* ---------------- Start ---------------- */
+
+restoreChat();
+initModel();
 
 </script>
 
