@@ -1,103 +1,45 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
-<title>WebGPU LLM Chat</title>
-
-<style>
-body { font-family: Arial; margin: 20px; }
-#chat { height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; }
-.msg { margin: 5px 0; }
-.user { color: blue; }
-.bot { color: green; }
-progress { width: 100%; }
-</style>
-
+<title>WebLLM Chat</title>
 </head>
 <body>
 
-<h2>LLM Chat (WebGPU)</h2>
-
-<progress id="progress" value="0" max="100"></progress>
-<div id="status">Init...</div>
-
 <div id="chat"></div>
-
-<input id="input" style="width:80%" placeholder="Message">
-<button id="sendBtn">Send</button>
+<input id="input">
+<button onclick="send()">Send</button>
 
 <script type="module">
-import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2";
-
-env.allowLocalModels = false;
-env.allowRemoteModels = true;
-env.remoteURL = "https://huggingface.co/";
-
-let generator = null;
-let ready = false;
+import * as webllm from "https://esm.run/@mlc-ai/web-llm";
 
 const chat = document.getElementById("chat");
-const status = document.getElementById("status");
-const progress = document.getElementById("progress");
-const input = document.getElementById("input");
-const btn = document.getElementById("sendBtn");
 
-function log(text, cls="bot") {
-    const div = document.createElement("div");
-    div.className = "msg " + cls;
-    div.textContent = text;
-    chat.appendChild(div);
-    chat.scrollTop = chat.scrollHeight;
+function add(text) {
+    const d = document.createElement("div");
+    d.textContent = text;
+    chat.appendChild(d);
 }
 
-async function load() {
-    if (generator) return;
-
-    status.textContent = "Downloading / caching model...";
-
-    generator = await pipeline(
-        "text-generation",
-        "Xenova/distilgpt2",
-        {
-            device: "webgpu",
-            progress_callback: (p) => {
-                if (p.status === "progress") {
-                    progress.value = Math.round(p.progress * 100);
-                }
-                status.textContent = p.status;
-            }
+const engine = await webllm.CreateMLCEngine(
+    "Phi-3-mini-4k-instruct-q4f16_1",
+    {
+        initProgressCallback: (p) => {
+            console.log(p);
         }
-    );
-
-    ready = true;
-    status.textContent = "Ready";
-}
+    }
+);
 
 async function send() {
-    const text = input.value.trim();
-    if (!text) return;
+    const input = document.getElementById("input").value;
+    add("You: " + input);
 
-    log("You: " + text, "user");
-    input.value = "";
-
-    if (!ready) {
-        log("Loading model...");
-        await load();
-    }
-
-    const out = await generator(text, {
-        max_new_tokens: 80,
-        temperature: 0.7
+    const reply = await engine.chat.completions.create({
+        messages: [{ role: "user", content: input }]
     });
 
-    log("Bot: " + out[0].generated_text, "bot");
+    add("Bot: " + reply.choices[0].message.content);
 }
-
-// FIX: proper binding
-btn.addEventListener("click", send);
-
-// preload
-load();
 </script>
 
 </body>
