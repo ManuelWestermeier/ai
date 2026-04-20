@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>LFM2.5 Chat (WebGPU)</title>
+<style>
+body { font-family: Arial; margin: 20px; }
+#chat { height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; }
+.msg { margin: 5px 0; }
+.user { color: blue; }
+.bot { color: green; }
+#progress { width: 100%; }
+</style>
+</head>
+<body>
+
+<h2>LFM2.5-350M Chat (WebGPU)</h2>
+
+<progress id="progress" value="0" max="100"></progress>
+<div id="status">Idle</div>
+
+<div id="chat"></div>
+
+<input id="input" placeholder="Type..." style="width:80%">
+<button onclick="send()">Send</button>
+
+<script type="module">
+import { pipeline } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@3.0.0";
+
+let generator;
+let loading = false;
+
+const statusEl = document.getElementById("status");
+const progressEl = document.getElementById("progress");
+const chatEl = document.getElementById("chat");
+
+function log(msg, cls="bot") {
+    const div = document.createElement("div");
+    div.className = "msg " + cls;
+    div.textContent = msg;
+    chatEl.appendChild(div);
+    chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+async function loadModel() {
+    if (generator || loading) return;
+    loading = true;
+
+    statusEl.textContent = "Loading model...";
+
+    generator = await pipeline(
+        "text-generation",
+        "Xenova/LFM2.5-350M", // ONNX/WebGPU compatible version required
+        {
+            device: "webgpu",
+            progress_callback: (p) => {
+                if (p.status === "progress") {
+                    progressEl.value = Math.round(p.progress * 100);
+                }
+                statusEl.textContent = p.status;
+            }
+        }
+    );
+
+    statusEl.textContent = "Ready";
+}
+
+async function send() {
+    const input = document.getElementById("input").value;
+    if (!input) return;
+
+    log("You: " + input, "user");
+    document.getElementById("input").value = "";
+
+    if (!generator) await loadModel();
+
+    log("Thinking...");
+
+    const output = await generator(input, {
+        max_new_tokens: 100,
+        temperature: 0.7,
+    });
+
+    const text = output[0].generated_text;
+
+    log("Bot: " + text, "bot");
+}
+
+loadModel();
+</script>
+
+</body>
+</html>
