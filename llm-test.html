@@ -128,9 +128,16 @@ async function send() {
     let full = "";
 
     const stream = await engine.chat.completions.create({
-        messages: [
-            { role: "user", content: text }
-        ],
+       messages: [
+    {
+        role: "system",
+        content: "You are a precise assistant. Write professional, correct German. No hallucinations. No roleplay. No extra commentary."
+    },
+    {
+        role: "user",
+        content: text
+    }
+],
         temperature: 0.7,
         max_tokens: 200,
         stream: true
