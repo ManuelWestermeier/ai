@@ -60,6 +60,16 @@
 
 <script>
 
+const tokenEl = document.getElementById("token");
+const nameEl = document.getElementById("name");
+const telEl = document.getElementById("tel");
+const emailEl = document.getElementById("email");
+const websiteEl = document.getElementById("website");
+const ortEl = document.getElementById("ort");
+const promptEl = document.getElementById("prompt");
+const statusEl = document.getElementById("status");
+const frame = document.getElementById("frame");
+
 const keys = {
   token: "vc_token",
   name: "vc_name",
@@ -71,23 +81,23 @@ const keys = {
 };
 
 function saveAll() {
-  localStorage.setItem(keys.token, token.value);
-  localStorage.setItem(keys.name, name.value);
-  localStorage.setItem(keys.tel, tel.value);
-  localStorage.setItem(keys.email, email.value);
-  localStorage.setItem(keys.website, website.value);
-  localStorage.setItem(keys.ort, ort.value);
-  localStorage.setItem(keys.prompt, prompt.value);
+  localStorage.setItem(keys.token, tokenEl.value);
+  localStorage.setItem(keys.name, nameEl.value);
+  localStorage.setItem(keys.tel, telEl.value);
+  localStorage.setItem(keys.email, emailEl.value);
+  localStorage.setItem(keys.website, websiteEl.value);
+  localStorage.setItem(keys.ort, ortEl.value);
+  localStorage.setItem(keys.prompt, promptEl.value);
 }
 
 function loadAll() {
-  token.value = localStorage.getItem(keys.token) || "";
-  name.value = localStorage.getItem(keys.name) || "";
-  tel.value = localStorage.getItem(keys.tel) || "";
-  email.value = localStorage.getItem(keys.email) || "";
-  website.value = localStorage.getItem(keys.website) || "";
-  ort.value = localStorage.getItem(keys.ort) || "";
-  prompt.value = localStorage.getItem(keys.prompt) || "";
+  tokenEl.value = localStorage.getItem(keys.token) || "";
+  nameEl.value = localStorage.getItem(keys.name) || "";
+  telEl.value = localStorage.getItem(keys.tel) || "";
+  emailEl.value = localStorage.getItem(keys.email) || "";
+  websiteEl.value = localStorage.getItem(keys.website) || "";
+  ortEl.value = localStorage.getItem(keys.ort) || "";
+  promptEl.value = localStorage.getItem(keys.prompt) || "";
 }
 
 /* ---------------- SYSTEM PROMPT ---------------- */
@@ -125,6 +135,7 @@ VALIDATION:
 /* ---------------- MODEL FALLBACK CHAIN ---------------- */
 
 const models = [
+  "minimax/minimax-m2.5:free",
   "qwen/qwen3-coder:free",
   "openai/gpt-oss-20b",
   "google/gemma-3-27b",
@@ -153,21 +164,20 @@ async function callModel(model, payload, token) {
 async function generateWithRetry() {
 
   saveAll();
-
   abortFlag = false;
 
-  const token = document.getElementById("token").value;
+  const token = tokenEl.value;
 
   const payload = {
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: JSON.stringify({
-        name: name.value,
-        tel: tel.value,
-        email: email.value,
-        website: website.value,
-        ort: ort.value,
-        design_prompt: prompt.value
+        name: nameEl.value,
+        tel: telEl.value,
+        email: emailEl.value,
+        website: websiteEl.value,
+        ort: ortEl.value,
+        design_prompt: promptEl.value
       })}
     ]
   };
@@ -179,24 +189,19 @@ async function generateWithRetry() {
 
     const model = models[modelIndex];
 
-    status.innerText = `model: ${model} | attempt: ${attempt}`;
+    statusEl.innerText = `model: ${model} | attempt: ${attempt}`;
 
     try {
 
       const res = await callModel(model, payload, token);
 
-      /* RATE LIMIT HANDLING */
       if (res.status === 429) {
-        status.innerText = `rate limit: ${model} -> retry in 5s`;
-        await sleep(50);
-        if (attempt % 10 === 9 && attempt > 50) await sleep(5000);
-        attempt++;
+        statusEl.innerText = `rate limit: ${model}`;
+        await sleep(2000);
         continue;
       }
 
-      if (!res.ok) {
-        throw new Error("HTTP " + res.status);
-      }
+      if (!res.ok) throw new Error("HTTP " + res.status);
 
       const data = await res.json();
 
@@ -213,27 +218,25 @@ async function generateWithRetry() {
       }
 
       render(parsed);
-      status.innerText = parsed.reasoning + " | " + parsed.validation;
+      statusEl.innerText = parsed.reasoning + " | " + parsed.validation;
 
       return;
 
     } catch (e) {
 
-      status.innerText = `error: ${e.message} -> fallback`;
+      statusEl.innerText = `error: ${e.message}`;
 
-      /* fallback next model */
       modelIndex++;
-
       if (modelIndex >= models.length) {
         modelIndex = 0;
         attempt++;
       }
 
-      /* infinite loop with delay */
-      await sleep(5000);
+      await sleep(1500);
 
-      if (attempt >= 10) {
-        status.innerText = "persistent failure loop (rate limit / provider down)";
+      if (attempt > 10) {
+        statusEl.innerText = "failure loop";
+        return;
       }
     }
   }
@@ -242,14 +245,12 @@ async function generateWithRetry() {
 /* ---------------- RENDER ---------------- */
 
 function render(parsed) {
-
   const doc = `
   <html>
   <body style="margin:0;background:white;display:flex;justify-content:center;align-items:center;height:100vh;">
     ${parsed.svg}
   </body>
   </html>`;
-
   frame.srcdoc = doc;
 }
 
