@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+
+<title>Visitenkarten Generator</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
+<style>
+  body { font-family: Inter, sans-serif; background:#0b0b0f; color:#e5e7eb; }
+  .glass { background: rgba(255,255,255,0.05); backdrop-filter: blur(12px); }
+</style>
+</head>
+
+<body class="p-6">
+
+<div class="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
+
+  <!-- INPUT -->
+  <div class="glass p-5 rounded-2xl space-y-3">
+    <h1 class="text-xl font-semibold">Visitenkarten Generator</h1>
+
+    <input id="token" placeholder="OpenRouter Token" class="w-full p-2 bg-black/40 rounded" />
+
+    <input id="name" placeholder="Name" class="w-full p-2 bg-black/40 rounded" />
+    <input id="tel" placeholder="Telefon" class="w-full p-2 bg-black/40 rounded" />
+    <input id="email" placeholder="Email" class="w-full p-2 bg-black/40 rounded" />
+    <input id="website" placeholder="Website" class="w-full p-2 bg-black/40 rounded" />
+    <input id="ort" placeholder="Ort" class="w-full p-2 bg-black/40 rounded" />
+
+    <textarea id="prompt" placeholder="Design Prompt" class="w-full p-2 bg-black/40 rounded"></textarea>
+
+    <button onclick="generate()" class="w-full bg-white text-black p-2 rounded font-semibold">
+      Generate
+    </button>
+
+    <div id="status" class="text-xs opacity-70"></div>
+  </div>
+
+  <!-- PREVIEW -->
+  <div class="glass p-5 rounded-2xl">
+    <h2 class="mb-3 font-semibold">Preview (85x55mm)</h2>
+
+    <div class="flex justify-center">
+      <iframe id="frame"
+        style="width:850px;height:550px;border:0;transform:scale(0.65);transform-origin:top center;background:white;">
+      </iframe>
+    </div>
+
+    <button onclick="download()" class="mt-4 w-full bg-gray-700 p-2 rounded">
+      Screenshot
+    </button>
+  </div>
+
+</div>
+
+<script>
+
+const keys = {
+  token: "vc_token",
+  name: "vc_name",
+  tel: "vc_tel",
+  email: "vc_email",
+  website: "vc_website",
+  ort: "vc_ort",
+  prompt: "vc_prompt"
+};
+
+function saveAll() {
+  localStorage.setItem(keys.token, token.value);
+  localStorage.setItem(keys.name, name.value);
+  localStorage.setItem(keys.tel, tel.value);
+  localStorage.setItem(keys.email, email.value);
+  localStorage.setItem(keys.website, website.value);
+  localStorage.setItem(keys.ort, ort.value);
+  localStorage.setItem(keys.prompt, prompt.value);
+}
+
+function loadAll() {
+  token.value = localStorage.getItem(keys.token) || "";
+  name.value = localStorage.getItem(keys.name) || "";
+  tel.value = localStorage.getItem(keys.tel) || "";
+  email.value = localStorage.getItem(keys.email) || "";
+  website.value = localStorage.getItem(keys.website) || "";
+  ort.value = localStorage.getItem(keys.ort) || "";
+  prompt.value = localStorage.getItem(keys.prompt) || "";
+}
+
+const SYSTEM_PROMPT = `
+Senior Brand Designer.
+
+Erstelle eine premium Visitenkarte.
+
+FORMAT:
+- 85x55mm (SVG viewBox 850x550)
+
+DESIGN:
+- minimal, high-end
+- kein template look
+- Swiss / Apple / Stripe style
+- max 1 akzentfarbe
+- klare typografie
+- viel whitespace
+
+OUTPUT STRICT JSON:
+{
+  "svg": "...",
+  "reasoning": "...",
+  "validation": "..."
+}
+
+VALIDATION:
+- layout korrekt
+- spacing sauber
+- hierarchie klar
+- 85x55 korrekt
+`;
+
+async function generate() {
+
+  saveAll();
+
+  const payload = {
+    model: "qwen/qwen3-coder:free",
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: JSON.stringify({
+        name: name.value,
+        tel: tel.value,
+        email: email.value,
+        website: website.value,
+        ort: ort.value,
+        design_prompt: prompt.value
+      })}
+    ]
+  };
+
+  status.innerText = "generating...";
+
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + token.value
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json();
+  let raw = data?.choices?.[0]?.message?.content || "{}";
+
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch { parsed = { svg:"<svg></svg>", reasoning:"error", validation:"invalid" }; }
+
+  const doc = `
+  <html>
+  <body style="margin:0;background:white;display:flex;justify-content:center;align-items:center;height:100vh;">
+    ${parsed.svg}
+  </body>
+  </html>`;
+
+  frame.srcdoc = doc;
+
+  status.innerText = parsed.reasoning + " | " + parsed.validation;
+}
+
+function download() {
+  const frameDoc = frame.contentWindow.document.body;
+  html2canvas(frameDoc).then(canvas => {
+    const a = document.createElement("a");
+    a.download = "card.png";
+    a.href = canvas.toDataURL();
+    a.click();
+  });
+}
+
+loadAll();
+
+</script>
+
+</body>
+</html>
