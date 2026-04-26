@@ -103,36 +103,25 @@ function loadAll() {
 /* ---------------- SYSTEM PROMPT ---------------- */
 
 const SYSTEM_PROMPT = `
-Senior Brand Designer.
+Return ONLY valid JSON.
+NO markdown.
+NO explanations.
+NO code blocks.
 
-Erstelle eine premium Visitenkarte.
+Create premium business card SVG.
 
 FORMAT:
-- 85x55mm (SVG viewBox 850x550)
+85x55mm (850x550 viewBox)
 
-DESIGN:
-- minimal, high-end
-- kein template look
-- Swiss / Apple / Stripe style
-- max 1 akzentfarbe
-- klare typografie
-- viel whitespace
-
-OUTPUT STRICT JSON:
+OUTPUT JSON:
 {
-  "svg": "...",
-  "reasoning": "...",
-  "validation": "..."
+  "svg": "string",
+  "reasoning": "string",
+  "validation": "string"
 }
-
-VALIDATION:
-- layout korrekt
-- spacing sauber
-- hierarchie klar
-- 85x55 korrekt
 `;
 
-/* ---------------- MODEL FALLBACK CHAIN ---------------- */
+/* ---------------- MODELS (DEFAULT FIRST) ---------------- */
 
 const models = [
   "minimax/minimax-m2.5:free",
@@ -146,10 +135,10 @@ const models = [
 
 let abortFlag = false;
 
-/* ---------------- CORE FETCH ---------------- */
+/* ---------------- API ---------------- */
 
 async function callModel(model, payload, token) {
-  return await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  return fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -159,7 +148,27 @@ async function callModel(model, payload, token) {
   });
 }
 
-/* ---------------- RETRY ENGINE ---------------- */
+/* ---------------- SAFE JSON PARSER ---------------- */
+
+function extractJSON(raw) {
+  if (!raw) return "{}";
+
+  raw = raw
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    .trim();
+
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+
+  if (start !== -1 && end !== -1 && end > start) {
+    return raw.substring(start, end + 1);
+  }
+
+  return "{}";
+}
+
+/* ---------------- ENGINE ---------------- */
 
 async function generateWithRetry() {
 
@@ -188,7 +197,6 @@ async function generateWithRetry() {
   while (!abortFlag) {
 
     const model = models[modelIndex];
-
     statusEl.innerText = `model: ${model} | attempt: ${attempt}`;
 
     try {
@@ -196,8 +204,8 @@ async function generateWithRetry() {
       const res = await callModel(model, payload, token);
 
       if (res.status === 429) {
-        statusEl.innerText = `rate limit: ${model}`;
-        await sleep(2000);
+        statusEl.innerText = "rate limit";
+        await sleep(1500);
         continue;
       }
 
@@ -205,11 +213,14 @@ async function generateWithRetry() {
 
       const data = await res.json();
 
-      let raw = data?.choices?.[0]?.message?.content || "{}";
+      const raw = data?.choices?.[0]?.message?.content || "";
+      const clean = extractJSON(raw);
 
       let parsed;
-      try { parsed = JSON.parse(raw); }
-      catch {
+
+      try {
+        parsed = JSON.parse(clean);
+      } catch {
         parsed = {
           svg: "<svg></svg>",
           reasoning: "parse_error",
@@ -224,7 +235,7 @@ async function generateWithRetry() {
 
     } catch (e) {
 
-      statusEl.innerText = `error: ${e.message}`;
+      statusEl.innerText = "error: " + e.message;
 
       modelIndex++;
       if (modelIndex >= models.length) {
@@ -232,10 +243,10 @@ async function generateWithRetry() {
         attempt++;
       }
 
-      await sleep(1500);
+      await sleep(1200);
 
       if (attempt > 10) {
-        statusEl.innerText = "failure loop";
+        statusEl.innerText = "failed";
         return;
       }
     }
@@ -245,13 +256,12 @@ async function generateWithRetry() {
 /* ---------------- RENDER ---------------- */
 
 function render(parsed) {
-  const doc = `
+  frame.srcdoc = `
   <html>
   <body style="margin:0;background:white;display:flex;justify-content:center;align-items:center;height:100vh;">
-    ${parsed.svg}
+    ${parsed.svg || ""}
   </body>
   </html>`;
-  frame.srcdoc = doc;
 }
 
 /* ---------------- UTILS ---------------- */
