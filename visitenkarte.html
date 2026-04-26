@@ -189,7 +189,7 @@ async function generateWithRetry() {
       if (res.status === 429) {
         status.innerText = `rate limit: ${model} -> retry in 5s`;
         await sleep(50);
-        if(attempt % 10 == 9) await speep(5000)
+        if (attempt % 10 === 9) await sleep(5000);
         attempt++;
         continue;
       }
