@@ -90,6 +90,8 @@ function loadAll() {
   prompt.value = localStorage.getItem(keys.prompt) || "";
 }
 
+/* ---------------- SYSTEM PROMPT ---------------- */
+
 const SYSTEM_PROMPT = `
 Senior Brand Designer.
 
@@ -120,12 +122,43 @@ VALIDATION:
 - 85x55 korrekt
 `;
 
-async function generate() {
+/* ---------------- MODEL FALLBACK CHAIN ---------------- */
+
+const models = [
+  "qwen/qwen3-coder:free",
+  "openai/gpt-oss-20b",
+  "google/gemma-3-27b",
+  "z-ai/glm-4.5-air"
+];
+
+/* ---------------- STATE ---------------- */
+
+let abortFlag = false;
+
+/* ---------------- CORE FETCH ---------------- */
+
+async function callModel(model, payload, token) {
+  return await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + token
+    },
+    body: JSON.stringify({ ...payload, model })
+  });
+}
+
+/* ---------------- RETRY ENGINE ---------------- */
+
+async function generateWithRetry() {
 
   saveAll();
 
+  abortFlag = false;
+
+  const token = document.getElementById("token").value;
+
   const payload = {
-    model: "qwen/qwen3-coder:free",
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: JSON.stringify({
@@ -139,23 +172,75 @@ async function generate() {
     ]
   };
 
-  status.innerText = "generating...";
+  let modelIndex = 0;
+  let attempt = 0;
 
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + token.value
-    },
-    body: JSON.stringify(payload)
-  });
+  while (!abortFlag) {
 
-  const data = await res.json();
-  let raw = data?.choices?.[0]?.message?.content || "{}";
+    const model = models[modelIndex];
 
-  let parsed;
-  try { parsed = JSON.parse(raw); }
-  catch { parsed = { svg:"<svg></svg>", reasoning:"error", validation:"invalid" }; }
+    status.innerText = `model: ${model} | attempt: ${attempt}`;
+
+    try {
+
+      const res = await callModel(model, payload, token);
+
+      /* RATE LIMIT HANDLING */
+      if (res.status === 429) {
+        status.innerText = `rate limit: ${model} -> retry in 5s`;
+        await sleep(5000);
+        attempt++;
+        continue;
+      }
+
+      if (!res.ok) {
+        throw new Error("HTTP " + res.status);
+      }
+
+      const data = await res.json();
+
+      let raw = data?.choices?.[0]?.message?.content || "{}";
+
+      let parsed;
+      try { parsed = JSON.parse(raw); }
+      catch {
+        parsed = {
+          svg: "<svg></svg>",
+          reasoning: "parse_error",
+          validation: "invalid_json"
+        };
+      }
+
+      render(parsed);
+      status.innerText = parsed.reasoning + " | " + parsed.validation;
+
+      return;
+
+    } catch (e) {
+
+      status.innerText = `error: ${e.message} -> fallback`;
+
+      /* fallback next model */
+      modelIndex++;
+
+      if (modelIndex >= models.length) {
+        modelIndex = 0;
+        attempt++;
+      }
+
+      /* infinite loop with delay */
+      await sleep(5000);
+
+      if (attempt >= 10) {
+        status.innerText = "persistent failure loop (rate limit / provider down)";
+      }
+    }
+  }
+}
+
+/* ---------------- RENDER ---------------- */
+
+function render(parsed) {
 
   const doc = `
   <html>
@@ -165,8 +250,18 @@ async function generate() {
   </html>`;
 
   frame.srcdoc = doc;
+}
 
-  status.innerText = parsed.reasoning + " | " + parsed.validation;
+/* ---------------- UTILS ---------------- */
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+/* ---------------- PUBLIC ---------------- */
+
+function generate() {
+  generateWithRetry();
 }
 
 function download() {
@@ -178,6 +273,8 @@ function download() {
     a.click();
   });
 }
+
+/* ---------------- INIT ---------------- */
 
 loadAll();
 
